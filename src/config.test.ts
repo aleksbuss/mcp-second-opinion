@@ -5,6 +5,7 @@ import {
   parseModels,
   dedupe,
   normalizeModels,
+  resolveModels,
   parseIntEnv,
   parseTempEnv,
 } from "./config.js";
@@ -46,6 +47,27 @@ describe("normalizeModels", () => {
   it("defaults the cap to MAX_MODELS", () => {
     const many = Array.from({ length: MAX_MODELS + 3 }, (_, i) => `m/${i}`);
     expect(normalizeModels(many).models).toHaveLength(MAX_MODELS);
+  });
+});
+
+describe("resolveModels", () => {
+  const fallback = ["d/one", "d/two"];
+
+  it("uses the requested models when given", () => {
+    expect(resolveModels(["a/x"], fallback).models).toEqual(["a/x"]);
+  });
+  it("falls back when requested is undefined or empty", () => {
+    expect(resolveModels(undefined, fallback).models).toEqual(fallback);
+    expect(resolveModels([], fallback).models).toEqual(fallback);
+  });
+  it("falls back when requested normalises to empty (whitespace-only ids)", () => {
+    // the schema's min(1) lets "  " through; resolveModels must not yield a 0-model panel
+    expect(resolveModels(["  ", "\t"], fallback).models).toEqual(fallback);
+  });
+  it("caps and reports dropped for an oversized request", () => {
+    const r = resolveModels(["a", "b", "c"], fallback, 2);
+    expect(r.models).toEqual(["a", "b"]);
+    expect(r.dropped).toBe(1);
   });
 });
 

@@ -4,7 +4,7 @@
 You are working on a small, production-quality **MCP server** (TypeScript, strict). Keep it small. Match the existing style: pure, fetch/sleep-injectable logic; explicit transient-vs-permanent error handling; a test for every behaviour. Read [`POST_MORTEMS.md`](./POST_MORTEMS.md) before touching the HTTP client or the fan-out — both entries there are live regressions waiting to happen again.
 
 ## Stack
-TypeScript (strict, `NodeNext` ESM) · `@modelcontextprotocol/sdk` (high-level `McpServer.registerTool` + `StdioServerTransport`) · **zod pinned to v3** (the SDK is built against it — see PM #2) · Vitest · GitHub Actions CI (Node 20 & 22).
+TypeScript (strict, `NodeNext` ESM) · `@modelcontextprotocol/sdk` (high-level `McpServer.registerTool` + `StdioServerTransport`) · **zod pinned to v3** (the SDK is built against it — see PM #2) · Vitest · GitHub Actions CI (Node 18, 20 & 22 — the matrix matches the `engines` claim).
 
 ## Architecture — three files, one job each
 ```

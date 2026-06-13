@@ -94,11 +94,29 @@ describe("chatCompletion", () => {
     await expect(chatCompletion({ ...base, fetchImpl: fetch })).rejects.toThrow(/not valid JSON/i);
   });
 
-  it("reports a timeout/abort as an error (transient)", async () => {
+  it("does NOT retry a timeout — the budget is spent (even with retries > 0)", async () => {
     const { fetch, calls } = fetchSeq([{ abort: true }]);
-    await expect(chatCompletion({ ...base, fetchImpl: fetch, retries: 0 })).rejects.toThrow(
+    await expect(chatCompletion({ ...base, fetchImpl: fetch, retries: 3 })).rejects.toThrow(
       /timed out/i,
     );
     expect(calls()).toBe(1);
+  });
+
+  it("DOES retry a genuine network error (no response)", async () => {
+    let i = 0;
+    const flaky = (async () => {
+      i++;
+      if (i === 1) throw new TypeError("fetch failed"); // network blip, not an abort
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => ({ choices: [{ message: { content: "recovered" } }] }),
+        text: async () => "",
+      } as Response;
+    }) as unknown as typeof fetch;
+    const r = await chatCompletion({ ...base, fetchImpl: flaky, retries: 2 });
+    expect(r.content).toBe("recovered");
+    expect(i).toBe(2);
   });
 });

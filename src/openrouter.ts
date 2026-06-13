@@ -69,9 +69,11 @@ function parseUsage(raw: unknown): TokenUsage | undefined {
     completionTokens: num(u.completion_tokens),
     totalTokens: num(u.total_tokens),
   };
-  return usage.totalTokens ?? usage.promptTokens ?? usage.completionTokens
-    ? usage
-    : undefined;
+  const hasAny =
+    usage.totalTokens !== undefined ||
+    usage.promptTokens !== undefined ||
+    usage.completionTokens !== undefined;
+  return hasAny ? usage : undefined;
 }
 
 async function attemptOnce(opts: Required<Pick<ChatOptions, "apiKey" | "model" | "messages">> & {
@@ -102,10 +104,13 @@ async function attemptOnce(opts: Required<Pick<ChatOptions, "apiKey" | "model" |
       signal: controller.signal,
     });
   } catch (err) {
-    // Network failure or our own abort timeout — both transient.
+    // Our own abort = the timeout fired; the per-attempt budget is already spent,
+    // and a timeout usually means the model is overloaded, so retrying it just
+    // multiplies latency while the rest of the panel waits. Treat it as permanent.
     if (err instanceof Error && err.name === "AbortError") {
-      throw new TransientError(`timed out after ${opts.timeoutMs}ms`);
+      throw new PermanentError(`timed out after ${opts.timeoutMs}ms`);
     }
+    // A genuine network failure (no response) is worth a quick retry.
     throw new TransientError(
       `request failed: ${err instanceof Error ? err.message : String(err)}`,
     );

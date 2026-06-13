@@ -49,6 +49,22 @@ export function normalizeModels(
   return { models: clean.slice(0, max), dropped: clean.length - max };
 }
 
+/**
+ * Resolve the panel to actually query: use `requested` when it has real content,
+ * otherwise the default. Crucially, if `requested` normalises to empty (e.g. the
+ * caller passed only whitespace ids — which the schema's `min(1)` does NOT catch),
+ * fall back to `fallback` instead of returning an empty "0 models" panel.
+ */
+export function resolveModels(
+  requested: string[] | undefined,
+  fallback: string[],
+  max = MAX_MODELS,
+): { models: string[]; dropped: number } {
+  const base = requested && requested.length > 0 ? requested : fallback;
+  const norm = normalizeModels(base, max);
+  return norm.models.length > 0 ? norm : normalizeModels(fallback, max);
+}
+
 /** Parse a positive integer env var, falling back to `fallback`. */
 export function parseIntEnv(raw: string | undefined, fallback: number): number {
   const n = Number(raw);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { askPanel, synthesize, formatResult, type PanelAnswer } from "./panel.js";
+import { askPanel, synthesize, formatResult, composeResult, type PanelAnswer } from "./panel.js";
 
 const noSleep = async (): Promise<void> => {};
 
@@ -212,5 +212,25 @@ describe("formatResult", () => {
     expect(out).toContain("## 🔎 Synthesis");
     expect(out).toContain("30 tokens total");
     expect(out).toContain("1 of 2 model(s) failed");
+  });
+});
+
+describe("composeResult", () => {
+  const ok: PanelAnswer = { model: "a", ok: true, content: "yes", ms: 1 };
+  const bad: PanelAnswer = { model: "b", ok: false, error: "x", ms: 1 };
+
+  it("is not an error when at least one model succeeded", () => {
+    expect(composeResult("q", [ok, bad]).isError).toBe(false);
+  });
+  it("is an error when EVERY model failed", () => {
+    expect(composeResult("q", [bad, { ...bad, model: "c" }]).isError).toBe(true);
+  });
+  it("is an error when the panel is empty", () => {
+    expect(composeResult("q", []).isError).toBe(true);
+  });
+  it("appends the dropped-models note", () => {
+    const { text } = composeResult("q", [ok], { dropped: 2, maxModels: 8 });
+    expect(text).toContain("2 duplicate/excess model(s) were dropped");
+    expect(text).toContain("capped at 8");
   });
 });

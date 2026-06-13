@@ -16,14 +16,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { askPanel, synthesize, formatResult } from "./panel.js";
+import { askPanel, synthesize, composeResult } from "./panel.js";
 import {
   DEFAULT_SYNTH,
   MAX_MODELS,
-  normalizeModels,
   parseIntEnv,
   parseModels,
   parseTempEnv,
+  resolveModels,
 } from "./config.js";
 
 const apiKey = process.env.OPENROUTER_API_KEY ?? "";
@@ -34,7 +34,7 @@ const defaultMaxTokens = parseIntEnv(process.env.SECOND_OPINION_MAX_TOKENS, 1024
 const defaultTemperature = parseTempEnv(process.env.SECOND_OPINION_TEMPERATURE, 0.7);
 const concurrency = parseIntEnv(process.env.SECOND_OPINION_CONCURRENCY, 4);
 
-const server = new McpServer({ name: "mcp-second-opinion", version: "0.2.0" });
+const server = new McpServer({ name: "mcp-second-opinion", version: "0.2.1" });
 
 const keyMissing = () => ({
   isError: true,
@@ -93,8 +93,9 @@ server.registerTool(
   async (args) => {
     if (!apiKey) return keyMissing();
 
-    const requested = args.models && args.models.length > 0 ? args.models : defaultPanel;
-    const { models, dropped } = normalizeModels(requested);
+    // resolveModels falls back to the default panel if `models` is omitted OR
+    // normalises to empty (e.g. only whitespace ids slipped past the schema).
+    const { models, dropped } = resolveModels(args.models, defaultPanel);
 
     const answers = await askPanel({
       apiKey,
@@ -122,15 +123,12 @@ server.registerTool(
       }
     }
 
-    let text = formatResult(args.prompt, answers, synthesis);
-    if (dropped > 0) {
-      text += `\n\n_(${dropped} duplicate/excess model(s) were dropped; the panel is capped at ${MAX_MODELS}.)_`;
-    }
-
-    // Signal an error to the client only when EVERY model failed — otherwise a
-    // partial panel is still a useful result.
-    const noneSucceeded = answers.length > 0 && answers.every((a) => !a.ok);
-    return { isError: noneSucceeded, content: [{ type: "text" as const, text }] };
+    const { text, isError } = composeResult(args.prompt, answers, {
+      synthesis,
+      dropped,
+      maxModels: MAX_MODELS,
+    });
+    return { isError, content: [{ type: "text" as const, text }] };
   },
 );
 

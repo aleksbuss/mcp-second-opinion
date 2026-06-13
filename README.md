@@ -103,7 +103,7 @@ The logic is split so it's testable without a network or a key — `fetch` and `
 - [`src/panel.ts`](src/panel.ts) — fan-out with bounded concurrency, dedup, the resilience invariant, and synthesis. ([tests](src/panel.test.ts))
 - [`src/config.ts`](src/config.ts) — pure config parsing (models, caps, env). ([tests](src/config.test.ts))
 
-40 tests, run on Node 20 & 22 in CI.
+49 tests, run on Node 18, 20 & 22 in CI.
 
 Engineering contracts and the failures that shaped them are written down in [`CLAUDE.md`](./CLAUDE.md) and [`POST_MORTEMS.md`](./POST_MORTEMS.md) — small project, but the same habit.
 

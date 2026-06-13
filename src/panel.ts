@@ -143,6 +143,25 @@ export async function synthesize(params: SynthesizeParams): Promise<string> {
   return content;
 }
 
+/**
+ * Decides the final MCP tool result from the panel: the Markdown text plus
+ * whether to flag `isError`. Pure, so the handler's decision logic is unit-tested
+ * (it isn't otherwise reachable without spinning up the server). `isError` is set
+ * only when the panel is empty or EVERY member failed — a partial panel is useful.
+ */
+export function composeResult(
+  prompt: string,
+  answers: PanelAnswer[],
+  opts: { synthesis?: string; dropped?: number; maxModels?: number } = {},
+): { text: string; isError: boolean } {
+  let text = formatResult(prompt, answers, opts.synthesis);
+  if (opts.dropped && opts.dropped > 0) {
+    text += `\n\n_(${opts.dropped} duplicate/excess model(s) were dropped; the panel is capped at ${opts.maxModels ?? "the limit"}.)_`;
+  }
+  const isError = answers.length === 0 || answers.every((a) => !a.ok);
+  return { text, isError };
+}
+
 /** Renders the panel (and optional synthesis) as Markdown for the MCP response. */
 export function formatResult(
   prompt: string,

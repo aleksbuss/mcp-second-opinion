@@ -8,6 +8,26 @@ Short, honest record of what actually broke (or nearly did) while building this 
 
 ---
 
+## 4. A second skeptical audit caught a whitespace-empty panel and a latency-multiplying retry
+
+**Date:** 2026-06 · **Status:** RESOLVED (v0.2.1) · **Severity:** P2
+
+**Symptoms:** Two issues a fresh Tech-Lead-lens review of v0.2.0 surfaced — **with all 40 tests green**:
+1. Model ids that were only whitespace (`"  "`) slipped past the zod `min(1)` schema, were then trimmed away by dedup, and left an empty panel that returned a confusing `# Second opinion — 0 models` with `isError: false`.
+2. A model that hit its per-attempt timeout was classified *transient* and retried up to N times — tripling the worst-case latency of a member that was already the slowest, while the rest of the panel had long since answered.
+
+**Detection:** A deliberate second audit, not the unit tests (they passed). Both were blind spots the first pass shipped.
+
+**Root Cause:**
+1. `z.string().min(1)` validates string **length**, not non-blank **content** — `"  "` has length 2. Schema validation is not input normalization.
+2. Lumping a read-timeout in with network errors as "transient" ignored that a timeout has already spent its full budget and usually signals an overloaded model — retrying rarely helps and always costs.
+
+**Fix:** `resolveModels` (config.ts) falls back to the default panel when a request normalises to empty; timeouts became `PermanentError` (not retried) while genuine network failures still retry. The handler's decision logic was extracted into a pure `composeResult` so `isError` / empty / dropped are now unit-tested. Tests 40 → 49.
+
+**Lesson / Rule:** **Schema `min(1)` is not "non-empty" — validate length *and* normalize/trim content, and always have a fallback for when normalization can empty a required input. And don't retry a timeout: its budget is spent, and retrying only multiplies the slowest member's latency.**
+
+---
+
 ## 3. The first cut fanned out unbounded, with no retries
 
 **Date:** 2026-06 · **Status:** RESOLVED (v0.2.0) · **Severity:** P2
