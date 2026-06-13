@@ -105,6 +105,8 @@ The logic is split so it's testable without a network or a key — `fetch` and `
 
 40 tests, run on Node 20 & 22 in CI.
 
+Engineering contracts and the failures that shaped them are written down in [`CLAUDE.md`](./CLAUDE.md) and [`POST_MORTEMS.md`](./POST_MORTEMS.md) — small project, but the same habit.
+
 ## License
 
 MIT © Aleksejs Buss
