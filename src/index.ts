@@ -5,40 +5,45 @@
  * optional synthesis that surfaces where the models disagree.
  *
  * Config (environment):
- *   OPENROUTER_API_KEY        required — your OpenRouter key (BYOK)
- *   SECOND_OPINION_MODELS     optional — comma-separated default panel
- *   SECOND_OPINION_SYNTH      optional — model used for synthesis
- *   SECOND_OPINION_TIMEOUT_MS optional — per-model timeout (default 60000)
+ *   OPENROUTER_API_KEY         required — your OpenRouter key (BYOK)
+ *   SECOND_OPINION_MODELS      optional — comma-separated default panel
+ *   SECOND_OPINION_SYNTH       optional — model used for synthesis
+ *   SECOND_OPINION_TIMEOUT_MS  optional — per-attempt timeout (default 60000)
+ *   SECOND_OPINION_MAX_TOKENS  optional — max output tokens per model (default 1024)
+ *   SECOND_OPINION_TEMPERATURE optional — sampling temperature 0..2 (default 0.7)
+ *   SECOND_OPINION_CONCURRENCY optional — max models queried at once (default 4)
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { askPanel, synthesize, formatResult } from "./panel.js";
-
-const DEFAULT_MODELS = [
-  "openai/gpt-4o-mini",
-  "anthropic/claude-3.5-haiku",
-  "google/gemini-2.5-flash-lite",
-];
-const DEFAULT_SYNTH = "openai/gpt-4o-mini";
-
-function parseModels(raw: string | undefined): string[] {
-  if (!raw) return DEFAULT_MODELS;
-  const list = raw
-    .split(",")
-    .map((m) => m.trim())
-    .filter(Boolean);
-  return list.length > 0 ? list : DEFAULT_MODELS;
-}
+import {
+  DEFAULT_SYNTH,
+  MAX_MODELS,
+  normalizeModels,
+  parseIntEnv,
+  parseModels,
+  parseTempEnv,
+} from "./config.js";
 
 const apiKey = process.env.OPENROUTER_API_KEY ?? "";
 const defaultPanel = parseModels(process.env.SECOND_OPINION_MODELS);
 const synthModel = process.env.SECOND_OPINION_SYNTH?.trim() || DEFAULT_SYNTH;
-const timeoutMs = Number(process.env.SECOND_OPINION_TIMEOUT_MS) || 60_000;
+const timeoutMs = parseIntEnv(process.env.SECOND_OPINION_TIMEOUT_MS, 60_000);
+const defaultMaxTokens = parseIntEnv(process.env.SECOND_OPINION_MAX_TOKENS, 1024);
+const defaultTemperature = parseTempEnv(process.env.SECOND_OPINION_TEMPERATURE, 0.7);
+const concurrency = parseIntEnv(process.env.SECOND_OPINION_CONCURRENCY, 4);
 
-const server = new McpServer({
-  name: "mcp-second-opinion",
-  version: "0.1.0",
+const server = new McpServer({ name: "mcp-second-opinion", version: "0.2.0" });
+
+const keyMissing = () => ({
+  isError: true,
+  content: [
+    {
+      type: "text" as const,
+      text: "OPENROUTER_API_KEY is not set. Add it to the server's environment (get a key at https://openrouter.ai/keys).",
+    },
+  ],
 });
 
 server.registerTool(
@@ -51,12 +56,13 @@ server.registerTool(
       "AND disagreement. Use this to sanity-check a claim, catch a single model's blind spot, or get a " +
       "genuine second opinion before trusting one answer.",
     inputSchema: {
-      prompt: z.string().min(1).describe("The question to put to the panel."),
+      prompt: z.string().min(1).max(50_000).describe("The question to put to the panel."),
       models: z
-        .array(z.string())
+        .array(z.string().min(1))
+        .max(MAX_MODELS)
         .optional()
         .describe(
-          "OpenRouter model ids to query (e.g. 'openai/gpt-4o-mini'). Omit to use the configured default panel.",
+          `OpenRouter model ids to query (e.g. 'openai/gpt-4o-mini'). Max ${MAX_MODELS}. Omit to use the default panel.`,
         ),
       synthesize: z
         .boolean()
@@ -66,31 +72,39 @@ server.registerTool(
         ),
       system: z
         .string()
+        .max(20_000)
         .optional()
         .describe("Optional system prompt sent to every model in the panel."),
+      max_tokens: z
+        .number()
+        .int()
+        .positive()
+        .max(32_000)
+        .optional()
+        .describe("Max output tokens per model. Defaults to the server setting."),
+      temperature: z
+        .number()
+        .min(0)
+        .max(2)
+        .optional()
+        .describe("Sampling temperature (0 = deterministic). Defaults to the server setting."),
     },
   },
   async (args) => {
-    if (!apiKey) {
-      return {
-        isError: true,
-        content: [
-          {
-            type: "text" as const,
-            text: "OPENROUTER_API_KEY is not set. Add it to the server's environment (get a key at https://openrouter.ai/keys).",
-          },
-        ],
-      };
-    }
+    if (!apiKey) return keyMissing();
 
-    const models = args.models && args.models.length > 0 ? args.models : defaultPanel;
+    const requested = args.models && args.models.length > 0 ? args.models : defaultPanel;
+    const { models, dropped } = normalizeModels(requested);
 
     const answers = await askPanel({
       apiKey,
       prompt: args.prompt,
       models,
       system: args.system,
+      maxTokens: args.max_tokens ?? defaultMaxTokens,
+      temperature: args.temperature ?? defaultTemperature,
       timeoutMs,
+      concurrency,
     });
 
     let synthesis: string | undefined;
@@ -108,9 +122,15 @@ server.registerTool(
       }
     }
 
-    return {
-      content: [{ type: "text" as const, text: formatResult(args.prompt, answers, synthesis) }],
-    };
+    let text = formatResult(args.prompt, answers, synthesis);
+    if (dropped > 0) {
+      text += `\n\n_(${dropped} duplicate/excess model(s) were dropped; the panel is capped at ${MAX_MODELS}.)_`;
+    }
+
+    // Signal an error to the client only when EVERY model failed — otherwise a
+    // partial panel is still a useful result.
+    const noneSucceeded = answers.length > 0 && answers.every((a) => !a.ok);
+    return { isError: noneSucceeded, content: [{ type: "text" as const, text }] };
   },
 );
 
@@ -128,8 +148,8 @@ server.registerTool(
       ...defaultPanel.map((m) => `  • ${m}`),
       "",
       `Synthesizer model (SECOND_OPINION_SYNTH): ${synthModel}`,
-      `Per-model timeout: ${timeoutMs}ms`,
-      `OpenRouter key set: ${apiKey ? "yes" : "NO — set OPENROUTER_API_KEY"}`,
+      `Per-attempt timeout: ${timeoutMs}ms · max tokens: ${defaultMaxTokens} · temperature: ${defaultTemperature} · concurrency: ${concurrency}`,
+      `Panel size cap: ${MAX_MODELS} · OpenRouter key set: ${apiKey ? "yes" : "NO — set OPENROUTER_API_KEY"}`,
       "",
       "Any model id available on OpenRouter works (https://openrouter.ai/models).",
     ].join("\n");
@@ -140,7 +160,6 @@ server.registerTool(
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  // Log to stderr (stdout is the JSON-RPC channel and must stay clean).
   console.error("mcp-second-opinion running on stdio");
 }
 
