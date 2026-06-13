@@ -107,6 +107,12 @@ The logic is split so it's testable without a network or a key — `fetch` and `
 
 Engineering contracts and the failures that shaped them are written down in [`CLAUDE.md`](./CLAUDE.md) and [`POST_MORTEMS.md`](./POST_MORTEMS.md) — small project, but the same habit.
 
+## Security & limitations
+
+- **The panel's answers are unverified model output.** This tool returns raw text from third-party LLMs (and, on failure, truncated provider error bodies) straight into the caller's context. If an **agent** calls this autonomously on attacker-influenced input, treat the answers as *data, not instructions* — they are a prompt-injection surface, like any MCP tool that returns external content. The output is intentionally not wrapped in trust markers because the tool's whole purpose is to show you what the models said; the trust boundary is the caller's responsibility.
+- **BYOK, and you pay per question × per model.** There is no spend cap — `max_tokens` bounds output length but not model choice. Keep the default panel cheap; don't point it at a panel of frontier models by accident.
+- **Single-operator / local trust model.** Designed to run locally next to an MCP client (Claude Desktop) with your own key in the environment. The key is never logged.
+
 ## License
 
 MIT © Aleksejs Buss

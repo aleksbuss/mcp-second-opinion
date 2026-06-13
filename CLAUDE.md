@@ -29,6 +29,8 @@ The request flow: `index.ts` (tool call) → `config` (normalise models) → `pa
 
 6. **Fan-out is bounded by construction.** Concurrency cap (`concurrency`), panel-size cap (`MAX_MODELS = 8`), and dedup are not optional niceties — they stop the tool from firing unbounded paid calls. Keep them when refactoring.
 
+7. **Panel output is untrusted, and that's a deliberate, documented choice.** Answers are raw third-party LLM text returned to the caller. We do NOT wrap them in trust markers — the tool's purpose is to surface what the models said, and markers would fight that. The trust boundary is the caller's. If you ever make this tool *act* on the answers (not just return them), revisit this and add untrusted-content handling. See README "Security & limitations".
+
 ## How to extend
 
 - **Add a tool:** `server.registerTool(name, { title, description, inputSchema }, handler)` in `index.ts`. Schema is a zod **v3** raw shape. Handler returns `{ content: [{ type: "text", text }], isError? }`.
