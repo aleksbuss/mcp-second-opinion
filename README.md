@@ -1,0 +1,96 @@
+# mcp-second-opinion
+
+[![CI](https://github.com/aleksbuss/mcp-second-opinion/actions/workflows/ci.yml/badge.svg)](https://github.com/aleksbuss/mcp-second-opinion/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org/)
+
+**An [MCP](https://modelcontextprotocol.io) server that gets you a second opinion.** It asks the *same* question to a panel of LLMs from different providers — in parallel, through a single [OpenRouter](https://openrouter.ai) key — and hands back every answer side by side. Optionally it synthesizes them, and is told to **surface where the models disagree** instead of averaging it into a confident-sounding blur.
+
+One model can be confidently wrong. A panel that's forced to disagree is much harder to fool — so give your agent (Claude Desktop, or any MCP client) the ability to check a claim against three minds before trusting one.
+
+```
+You → second_opinion("Is this SQL injection-safe?", synthesize: true)
+
+  ## openai/gpt-4o-mini      → "Yes, parameterised — safe."
+  ## anthropic/claude-3.5-haiku → "No — the ORDER BY clause is interpolated."
+  ## google/gemini-2.5-flash → "Safe for the WHERE clause; ORDER BY is a risk."
+
+  ## 🔎 Synthesis
+  Disagreement: the ORDER BY interpolation. Two of three flag it. Bottom line: not safe.
+```
+
+## Why
+
+- **Cross-provider by design.** OpenRouter proxies OpenAI / Anthropic / Google / Meta / … behind one OpenAI-compatible endpoint, so a real multi-provider panel needs only **one** API key.
+- **Resilient by construction.** Members run with `Promise.allSettled` and a per-model timeout. A slow or failing model is reported as one failed answer — it never sinks the batch. (Covered by tests.)
+- **Disagreement is the point.** The synthesizer is explicitly instructed to name conflicts, not smooth them away.
+
+## Install
+
+Requires Node ≥ 18 and an OpenRouter API key (free to create at <https://openrouter.ai/keys>).
+
+```bash
+git clone https://github.com/aleksbuss/mcp-second-opinion.git
+cd mcp-second-opinion
+npm install
+npm run build
+```
+
+### Add it to Claude Desktop
+
+Edit `claude_desktop_config.json` (Claude → Settings → Developer → Edit Config):
+
+```jsonc
+{
+  "mcpServers": {
+    "second-opinion": {
+      "command": "node",
+      "args": ["/absolute/path/to/mcp-second-opinion/dist/index.js"],
+      "env": {
+        "OPENROUTER_API_KEY": "sk-or-..."
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop; the `second_opinion` and `list_panel_models` tools appear.
+
+## Tools
+
+### `second_opinion`
+| arg | type | notes |
+| --- | --- | --- |
+| `prompt` | string (required) | The question to put to the panel. |
+| `models` | string[] (optional) | OpenRouter model ids. Omit to use the default panel. |
+| `synthesize` | boolean (optional) | If true, a synthesizer model compares the answers. |
+| `system` | string (optional) | System prompt sent to every model. |
+
+### `list_panel_models`
+Returns the configured default panel and how to override it. No arguments.
+
+## Configuration (environment)
+
+| var | required | default |
+| --- | --- | --- |
+| `OPENROUTER_API_KEY` | ✅ | — |
+| `SECOND_OPINION_MODELS` | | `openai/gpt-4o-mini, anthropic/claude-3.5-haiku, google/gemini-2.5-flash-lite` |
+| `SECOND_OPINION_SYNTH` | | `openai/gpt-4o-mini` |
+| `SECOND_OPINION_TIMEOUT_MS` | | `60000` |
+
+Any model id on <https://openrouter.ai/models> works. Pick a cheap, fast panel — you're paying for N calls per question.
+
+## Develop
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm test            # vitest (mocks fetch; no network, no key needed)
+npm run build       # → dist/
+npm run dev         # run from source via tsx
+```
+
+The core fan-out and synthesis logic lives in [`src/panel.ts`](src/panel.ts) and is pure + fetch-injectable, so the resilience behaviour (one member failing, timeouts) is unit-tested without touching the network.
+
+## License
+
+MIT © Aleksejs Buss
