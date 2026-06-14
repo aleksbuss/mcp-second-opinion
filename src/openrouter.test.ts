@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { chatCompletion } from "./openrouter.js";
+import { chatCompletion, embed } from "./openrouter.js";
 
 const noSleep = async (): Promise<void> => {};
 
@@ -118,5 +118,45 @@ describe("chatCompletion", () => {
     const r = await chatCompletion({ ...base, fetchImpl: flaky, retries: 2 });
     expect(r.content).toBe("recovered");
     expect(i).toBe(2);
+  });
+});
+
+describe("embed", () => {
+  const jsonFetch = (body: unknown, ok = true, status = 200): typeof fetch =>
+    (async () =>
+      ({
+        ok,
+        status,
+        statusText: "X",
+        json: async () => body,
+        text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
+      }) as Response) as unknown as typeof fetch;
+
+  it("returns one vector per input, re-ordered by `index`", async () => {
+    // API returns rows out of order — embed must sort them back to input order
+    const fetchImpl = jsonFetch({
+      data: [
+        { index: 1, embedding: [9, 9] },
+        { index: 0, embedding: [1, 1] },
+      ],
+    });
+    const vecs = await embed({ apiKey: "k", model: "e", input: ["first", "second"], fetchImpl });
+    expect(vecs).toEqual([
+      [1, 1],
+      [9, 9],
+    ]);
+  });
+
+  it("throws on a non-2xx status", async () => {
+    await expect(
+      embed({ apiKey: "k", model: "e", input: ["x"], fetchImpl: jsonFetch("nope", false, 401) }),
+    ).rejects.toThrow(/embeddings HTTP 401/);
+  });
+
+  it("throws when the vector count does not match the input count", async () => {
+    const fetchImpl = jsonFetch({ data: [{ index: 0, embedding: [1] }] });
+    await expect(
+      embed({ apiKey: "k", model: "e", input: ["a", "b"], fetchImpl }),
+    ).rejects.toThrow(/1 vectors for 2 inputs/);
   });
 });

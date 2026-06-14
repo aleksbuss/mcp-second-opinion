@@ -20,11 +20,15 @@ import { askPanel, synthesize, composeResult } from "./panel.js";
 import {
   DEFAULT_SYNTH,
   MAX_MODELS,
+  parseBoolEnv,
   parseIntEnv,
   parseModels,
   parseTempEnv,
+  parseThresholdEnv,
   resolveModels,
 } from "./config.js";
+import { scoreDisagreement, DEFAULT_DISAGREE_THRESHOLD } from "./disagreement.js";
+import { makeOpenRouterEmbedder, DEFAULT_EMBED_MODEL } from "./embedder.js";
 
 const apiKey = process.env.OPENROUTER_API_KEY ?? "";
 const defaultPanel = parseModels(process.env.SECOND_OPINION_MODELS);
@@ -33,8 +37,14 @@ const timeoutMs = parseIntEnv(process.env.SECOND_OPINION_TIMEOUT_MS, 60_000);
 const defaultMaxTokens = parseIntEnv(process.env.SECOND_OPINION_MAX_TOKENS, 1024);
 const defaultTemperature = parseTempEnv(process.env.SECOND_OPINION_TEMPERATURE, 0.7);
 const concurrency = parseIntEnv(process.env.SECOND_OPINION_CONCURRENCY, 4);
+const embeddingsOn = parseBoolEnv(process.env.SECOND_OPINION_EMBEDDINGS, true);
+const embedModel = process.env.SECOND_OPINION_EMBED_MODEL?.trim() || DEFAULT_EMBED_MODEL;
+const disagreeThreshold = parseThresholdEnv(
+  process.env.SECOND_OPINION_DISAGREE_THRESHOLD,
+  DEFAULT_DISAGREE_THRESHOLD,
+);
 
-const server = new McpServer({ name: "mcp-second-opinion", version: "0.2.1" });
+const server = new McpServer({ name: "mcp-second-opinion", version: "0.3.0" });
 
 const keyMissing = () => ({
   isError: true,
@@ -108,6 +118,21 @@ server.registerTool(
       concurrency,
     });
 
+    // Best-effort disagreement score: embed the successful answers and measure how
+    // far apart they are. Never throws (returns null on <2 answers or embed failure),
+    // so a missing score can't slow or sink the panel.
+    const okForScoring = answers
+      .filter((a) => a.ok && a.content)
+      .map((a) => ({ model: a.model, content: a.content as string }));
+    const disagreement =
+      embeddingsOn && okForScoring.length >= 2
+        ? await scoreDisagreement(
+            okForScoring,
+            makeOpenRouterEmbedder(apiKey, embedModel, timeoutMs),
+            disagreeThreshold,
+          )
+        : null;
+
     let synthesis: string | undefined;
     if (args.synthesize && answers.some((a) => a.ok)) {
       try {
@@ -116,6 +141,8 @@ server.registerTool(
           prompt: args.prompt,
           answers,
           model: synthModel,
+          // When the panel is flagged as divided, tell the synthesizer to centre the conflict.
+          emphasizeConflict: disagreement?.flagged ?? false,
           timeoutMs,
         });
       } catch (err) {
@@ -125,6 +152,7 @@ server.registerTool(
 
     const { text, isError } = composeResult(args.prompt, answers, {
       synthesis,
+      disagreement,
       dropped,
       maxModels: MAX_MODELS,
     });
@@ -147,6 +175,7 @@ server.registerTool(
       "",
       `Synthesizer model (SECOND_OPINION_SYNTH): ${synthModel}`,
       `Per-attempt timeout: ${timeoutMs}ms · max tokens: ${defaultMaxTokens} · temperature: ${defaultTemperature} · concurrency: ${concurrency}`,
+      `Disagreement scoring: ${embeddingsOn ? "on" : "off"} · embed model: ${embedModel} · flag threshold: ${disagreeThreshold}`,
       `Panel size cap: ${MAX_MODELS} · OpenRouter key set: ${apiKey ? "yes" : "NO — set OPENROUTER_API_KEY"}`,
       "",
       "Any model id available on OpenRouter works (https://openrouter.ai/models).",

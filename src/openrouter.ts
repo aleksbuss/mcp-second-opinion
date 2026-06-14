@@ -15,6 +15,7 @@
  */
 
 export const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+export const OPENROUTER_EMBED_URL = "https://openrouter.ai/api/v1/embeddings";
 
 /** Statuses worth retrying — overload / rate-limit / gateway, never client errors. */
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
@@ -178,4 +179,69 @@ export async function chatCompletion(opts: ChatOptions): Promise<ChatResult> {
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+export interface EmbedOptions {
+  apiKey: string;
+  model: string;
+  input: string[];
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * Embeds `input` via OpenRouter's embeddings endpoint — the same key as the chat
+ * panel, no separate provider. Returns one vector per input, ordered to match the
+ * input (the API may return them out of order, so we sort by `index`). Throws on
+ * any failure; the disagreement layer treats that as "no score" (best-effort), so
+ * there's no retry here — a missing score must never slow or break the panel.
+ */
+export async function embed(opts: EmbedOptions): Promise<number[][]> {
+  const { apiKey, model, input, timeoutMs = 30_000, fetchImpl = fetch } = opts;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let res: Response;
+  try {
+    res = await fetchImpl(OPENROUTER_EMBED_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/aleksbuss/mcp-second-opinion",
+        "X-Title": "mcp-second-opinion",
+      },
+      body: JSON.stringify({ model, input }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`embeddings timed out after ${timeoutMs}ms`);
+    }
+    throw new Error(`embeddings request failed: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!res.ok) {
+    const body = (await res.text().catch(() => "")).slice(0, 200);
+    throw new Error(`embeddings HTTP ${res.status}${body ? ` — ${body}` : ""}`);
+  }
+
+  const data = (await res.json()) as {
+    data?: Array<{ embedding?: number[]; index?: number }>;
+    error?: { message?: string };
+  };
+  if (data.error) throw new Error(`embeddings provider error: ${data.error.message ?? "unknown"}`);
+  const rows = data.data;
+  if (!Array.isArray(rows) || rows.length !== input.length) {
+    throw new Error(`embeddings returned ${rows?.length ?? 0} vectors for ${input.length} inputs`);
+  }
+
+  // Sort by `index` so vector[i] corresponds to input[i].
+  const ordered = [...rows].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+  return ordered.map((r) => {
+    if (!Array.isArray(r.embedding)) throw new Error("embeddings response had a row with no vector");
+    return r.embedding;
+  });
 }

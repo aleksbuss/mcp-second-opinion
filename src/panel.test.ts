@@ -203,7 +203,7 @@ describe("formatResult", () => {
         { model: "a/one", ok: true, content: "Answer A", tokens: 30, ms: 12 },
         { model: "b/two", ok: false, error: "HTTP 429", ms: 8 },
       ],
-      "Synthesis text",
+      { synthesis: "Synthesis text" },
     );
     expect(out).toContain("## a/one (12ms, 30 tok)");
     expect(out).toContain("Answer A");
@@ -212,6 +212,20 @@ describe("formatResult", () => {
     expect(out).toContain("## 🔎 Synthesis");
     expect(out).toContain("30 tokens total");
     expect(out).toContain("1 of 2 model(s) failed");
+  });
+
+  it("renders a disagreement section when a report is supplied", () => {
+    const out = formatResult("Q?", [{ model: "a", ok: true, content: "x", ms: 1 }], {
+      disagreement: {
+        score: 0.4,
+        maxDistance: 0.62,
+        mostDivergentPair: ["a/one", "b/two"],
+        flagged: true,
+        models: ["a/one", "b/two"],
+      },
+    });
+    expect(out).toContain("## ⚖ Disagreement: strong disagreement — flagged");
+    expect(out).toContain("Max pairwise distance **0.62** (a/one ↔ b/two)");
   });
 });
 

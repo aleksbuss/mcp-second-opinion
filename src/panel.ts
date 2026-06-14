@@ -5,6 +5,7 @@
  */
 import { chatCompletion, type ChatMessage } from "./openrouter.js";
 import { dedupe } from "./config.js";
+import { disagreementLabel, type DisagreementReport } from "./disagreement.js";
 
 export interface PanelAnswer {
   model: string;
@@ -97,6 +98,8 @@ export interface SynthesizeParams {
   prompt: string;
   answers: PanelAnswer[];
   model: string;
+  /** When the panel is flagged as divided, make the conflict the centre of the synthesis. */
+  emphasizeConflict?: boolean;
   maxTokens?: number;
   timeoutMs?: number;
   retries?: number;
@@ -120,7 +123,11 @@ export async function synthesize(params: SynthesizeParams): Promise<string> {
   const system =
     "You are a careful aggregator comparing answers from several AI models to the same question. " +
     "Identify where they AGREE and, just as importantly, where they DISAGREE — name the conflict explicitly " +
-    "instead of averaging it away. Then give a short, honest bottom line. Be concise.";
+    "instead of averaging it away. Then give a short, honest bottom line. Be concise." +
+    (params.emphasizeConflict
+      ? " NOTE: an embedding-distance check flagged these answers as significantly divergent — do NOT paper over it; " +
+        "make the disagreement and its stakes the centre of your response."
+      : "");
 
   const user =
     `Original question:\n${params.prompt}\n\n` +
@@ -152,9 +159,17 @@ export async function synthesize(params: SynthesizeParams): Promise<string> {
 export function composeResult(
   prompt: string,
   answers: PanelAnswer[],
-  opts: { synthesis?: string; dropped?: number; maxModels?: number } = {},
+  opts: {
+    synthesis?: string;
+    disagreement?: DisagreementReport | null;
+    dropped?: number;
+    maxModels?: number;
+  } = {},
 ): { text: string; isError: boolean } {
-  let text = formatResult(prompt, answers, opts.synthesis);
+  let text = formatResult(prompt, answers, {
+    synthesis: opts.synthesis,
+    disagreement: opts.disagreement,
+  });
   if (opts.dropped && opts.dropped > 0) {
     text += `\n\n_(${opts.dropped} duplicate/excess model(s) were dropped; the panel is capped at ${opts.maxModels ?? "the limit"}.)_`;
   }
@@ -162,11 +177,16 @@ export function composeResult(
   return { text, isError };
 }
 
-/** Renders the panel (and optional synthesis) as Markdown for the MCP response. */
+export interface FormatOptions {
+  synthesis?: string;
+  disagreement?: DisagreementReport | null;
+}
+
+/** Renders the panel (disagreement score + optional synthesis) as Markdown. */
 export function formatResult(
   prompt: string,
   answers: PanelAnswer[],
-  synthesis?: string,
+  opts: FormatOptions = {},
 ): string {
   const lines: string[] = [];
   lines.push(`# Second opinion — ${answers.length} models`);
@@ -183,9 +203,21 @@ export function formatResult(
     lines.push("");
   }
 
-  if (synthesis) {
+  const d = opts.disagreement;
+  if (d) {
+    const [x, y] = d.mostDivergentPair;
+    lines.push(`## ⚖ Disagreement: ${disagreementLabel(d.maxDistance)}${d.flagged ? " — flagged" : ""}`);
+    lines.push(
+      `Max pairwise distance **${d.maxDistance.toFixed(2)}** (${x} ↔ ${y}); ` +
+        `mean ${d.score.toFixed(2)} across ${d.models.length} models. ` +
+        "(0 = identical, 1 = unrelated; embedding cosine distance.)",
+    );
+    lines.push("");
+  }
+
+  if (opts.synthesis) {
     lines.push("## 🔎 Synthesis");
-    lines.push(synthesis);
+    lines.push(opts.synthesis);
     lines.push("");
   }
 

@@ -8,6 +8,8 @@ import {
   resolveModels,
   parseIntEnv,
   parseTempEnv,
+  parseThresholdEnv,
+  parseBoolEnv,
 } from "./config.js";
 
 describe("parseModels", () => {
@@ -96,5 +98,36 @@ describe("parseTempEnv", () => {
     ["abc", 0.7],
   ])("%s -> %s", (raw, expected) => {
     expect(parseTempEnv(raw as string | undefined, 0.7)).toBe(expected);
+  });
+});
+
+describe("parseThresholdEnv", () => {
+  it.each([
+    [undefined, 0.35],
+    ["0", 0],
+    ["0.5", 0.5],
+    ["1", 1],
+    ["1.5", 0.35], // out of 0..1
+    ["-0.1", 0.35],
+    ["abc", 0.35],
+  ])("%s -> %s", (raw, expected) => {
+    expect(parseThresholdEnv(raw as string | undefined, 0.35)).toBe(expected);
+  });
+});
+
+describe("parseBoolEnv", () => {
+  it.each([
+    [undefined, true, true],
+    ["", true, true],
+    ["false", true, false],
+    ["0", true, false],
+    ["off", true, false],
+    ["no", true, false],
+    ["true", false, true],
+    ["1", false, true],
+    ["on", false, true],
+    ["garbage", true, true],
+  ])("%s (fallback %s) -> %s", (raw, fallback, expected) => {
+    expect(parseBoolEnv(raw as string | undefined, fallback as boolean)).toBe(expected);
   });
 });

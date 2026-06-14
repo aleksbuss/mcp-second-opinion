@@ -77,3 +77,19 @@ export function parseTempEnv(raw: string | undefined, fallback: number): number 
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 && n <= 2 ? n : fallback;
 }
+
+/** Parse a disagreement-threshold env var (0..1), falling back to `fallback`. */
+export function parseThresholdEnv(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : fallback;
+}
+
+/** Parse a boolean env var; `false`/`0`/`off`/`no` are false, anything else uses `fallback`. */
+export function parseBoolEnv(raw: string | undefined, fallback: boolean): boolean {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const v = raw.trim().toLowerCase();
+  if (["false", "0", "off", "no"].includes(v)) return false;
+  if (["true", "1", "on", "yes"].includes(v)) return true;
+  return fallback;
+}
