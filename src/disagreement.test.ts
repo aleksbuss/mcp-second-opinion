@@ -5,6 +5,7 @@ import {
   pairwiseDisagreement,
   disagreementLabel,
   scoreDisagreement,
+  MAX_EMBED_CHARS,
   type Embedder,
 } from "./disagreement.js";
 
@@ -23,6 +24,9 @@ describe("cosineSimilarity", () => {
   });
   it("is 0 (not NaN) when a vector is all zeros", () => {
     expect(cosineSimilarity([0, 0], [1, 1])).toBe(0);
+  });
+  it("throws loudly on a dimension mismatch instead of truncating", () => {
+    expect(() => cosineSimilarity([1, 2, 3], [1, 2])).toThrow(/dimension mismatch/);
   });
 });
 
@@ -131,6 +135,24 @@ describe("scoreDisagreement", () => {
       boom,
     );
     expect(r).toBeNull();
+  });
+
+  it("truncates over-long answers before embedding (so one can't blow the limit)", async () => {
+    let received: string[] = [];
+    const spy: Embedder = async (texts) => {
+      received = texts;
+      return texts.map(() => [1, 0]);
+    };
+    const long = "x".repeat(MAX_EMBED_CHARS + 5000);
+    await scoreDisagreement(
+      [
+        { model: "a", content: long },
+        { model: "b", content: "short" },
+      ],
+      spy,
+    );
+    expect(received[0]!.length).toBe(MAX_EMBED_CHARS);
+    expect(received[1]).toBe("short");
   });
 
   it("returns null when the embedder returns the wrong count", async () => {

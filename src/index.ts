@@ -12,6 +12,9 @@
  *   SECOND_OPINION_MAX_TOKENS  optional — max output tokens per model (default 1024)
  *   SECOND_OPINION_TEMPERATURE optional — sampling temperature 0..2 (default 0.7)
  *   SECOND_OPINION_CONCURRENCY optional — max models queried at once (default 4)
+ *   SECOND_OPINION_EMBEDDINGS  optional — disagreement scoring on/off (default on)
+ *   SECOND_OPINION_EMBED_MODEL optional — embeddings model (default text-embedding-3-small)
+ *   SECOND_OPINION_DISAGREE_THRESHOLD optional — flag distance 0..1 (default 0.35)
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -44,7 +47,7 @@ const disagreeThreshold = parseThresholdEnv(
   DEFAULT_DISAGREE_THRESHOLD,
 );
 
-const server = new McpServer({ name: "mcp-second-opinion", version: "0.3.0" });
+const server = new McpServer({ name: "mcp-second-opinion", version: "0.3.1" });
 
 const keyMissing = () => ({
   isError: true,
