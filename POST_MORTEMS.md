@@ -8,6 +8,22 @@ Short, honest record of what actually broke (or nearly did) while building this 
 
 ---
 
+## 5. The design assumed OpenRouter had no embeddings; verifying killed a heavy dependency
+
+**Date:** 2026-06 · **Status:** RESOLVED (v0.3.0) · **Severity:** P2
+
+**Symptoms:** The disagreement-scoring plan committed to bundling Transformers.js — a sizeable dependency, a ~23 MB ONNX model downloaded on first use, cold-start latency, and a "CI must not download the model" caveat — all resting on the stated assumption that *"OpenRouter is chat-completions only, no embeddings."*
+
+**Detection:** Before writing the embedder, one live probe — `POST /api/v1/embeddings` with the existing key — returned `200` with a real vector.
+
+**Root Cause:** The assumption was inherited from OpenRouter's chat-first reputation and **never checked against the live API**. An entire heavyweight design rested on it.
+
+**Fix:** Use OpenRouter's `/embeddings` with the *same* key — `openrouter.embed()` + a thin `makeOpenRouterEmbedder`. No new dependency, no model download, no CI caveat, lower latency. The `Embedder` interface stayed injectable, so swapping in a local/API embedder later is still a one-liner.
+
+**Lesson / Rule:** **Verify a load-bearing assumption against the live API before designing around it** — the same lesson as PM #1, one layer up: there it was a single model id, here it was a whole capability. A five-second probe deleted a dependency, a download, and a CI workaround.
+
+---
+
 ## 4. A second skeptical audit caught a whitespace-empty panel and a latency-multiplying retry
 
 **Date:** 2026-06 · **Status:** RESOLVED (v0.2.1) · **Severity:** P2

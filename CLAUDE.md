@@ -8,10 +8,12 @@ TypeScript (strict, `NodeNext` ESM) · `@modelcontextprotocol/sdk` (high-level `
 
 ## Architecture — three files, one job each
 ```
-src/openrouter.ts  HTTP client: one model call, retries, error taxonomy, token usage
-src/panel.ts       Fan-out (bounded concurrency + dedup) + synthesis + Markdown render
-src/config.ts      Pure config parsing: model lists, caps, env coercion
-src/index.ts       MCP server: tool registration, arg schemas, env wiring (the only impure file)
+src/openrouter.ts   HTTP client: chat (retries, error taxonomy, usage) + embeddings
+src/panel.ts        Fan-out (bounded concurrency + dedup) + synthesis + Markdown render
+src/disagreement.ts Embedding-distance scoring (cosine, pairwise) — embedder injected
+src/embedder.ts     Adapts openrouter.embed() to the Embedder interface
+src/config.ts       Pure config parsing: model lists, caps, env coercion
+src/index.ts        MCP server: tool registration, arg schemas, env wiring (the only impure file)
 ```
 The request flow: `index.ts` (tool call) → `config` (normalise models) → `panel.askPanel` (fan out, bounded) → `openrouter.chatCompletion` (per model, retried) → `panel.formatResult` (Markdown back to the client).
 
@@ -30,6 +32,8 @@ The request flow: `index.ts` (tool call) → `config` (normalise models) → `pa
 6. **Fan-out is bounded by construction.** Concurrency cap (`concurrency`), panel-size cap (`MAX_MODELS = 8`), and dedup are not optional niceties — they stop the tool from firing unbounded paid calls. Keep them when refactoring.
 
 7. **Panel output is untrusted, and that's a deliberate, documented choice.** Answers are raw third-party LLM text returned to the caller. We do NOT wrap them in trust markers — the tool's purpose is to surface what the models said, and markers would fight that. The trust boundary is the caller's. If you ever make this tool *act* on the answers (not just return them), revisit this and add untrusted-content handling. See README "Security & limitations".
+
+8. **Disagreement scoring is best-effort and the embedder is injected.** `scoreDisagreement` returns `null` (never throws) on <2 answers or an embedding failure — a missing score must never slow or sink the panel. The `Embedder` is a parameter (`(texts) => Promise<number[][]>`), so the cosine maths is unit-tested with preset vectors — no model, no network, no key in CI. The real embedder rides OpenRouter's `/embeddings` (same key — `/embeddings` exists despite OpenRouter's chat-first reputation; PM #5). To swap in a local or API embedder, implement `Embedder` and wire it in `index.ts` — the maths doesn't change.
 
 ## How to extend
 

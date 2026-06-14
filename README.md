@@ -24,7 +24,7 @@ You → second_opinion("Is this SQL injection-safe?", synthesize: true)
 - **Cross-provider by design.** OpenRouter proxies OpenAI / Anthropic / Google / Meta / … behind one OpenAI-compatible endpoint, so a real multi-provider panel needs only **one** API key.
 - **Resilient by construction.** Each member runs with a per-attempt timeout, **bounded retries with backoff + jitter** on transient failures (429 / 5xx / network), and fast-fail on permanent ones (400/401/404). A slow or failing model is reported as one failed answer — it never sinks the batch. All covered by tests.
 - **Bounded & honest about cost.** Fan-out is capped (concurrency limit + max panel size + dedup of repeated ids), and every answer reports its **token usage** with a running total — you can see what N opinions cost.
-- **Disagreement is the point.** The synthesizer is explicitly instructed to name conflicts, not smooth them away.
+- **Disagreement is measured, not just described.** The answers are embedded and scored by pairwise cosine distance; when the panel is genuinely split (past a threshold), the synthesizer is told to *centre* the conflict instead of averaging it away. See below.
 
 ## Install
 
@@ -74,6 +74,20 @@ Returns an error result to the client only when **every** model fails; a partial
 ### `list_panel_models`
 Returns the configured default panel and how to override it. No arguments.
 
+## Disagreement scoring
+
+Whenever ≥2 models answer, the server embeds the answers (via OpenRouter's `/embeddings` — same key) and computes **pairwise cosine distance** to measure how far apart they actually are:
+
+```
+## ⚖ Disagreement: strong disagreement — flagged
+Max pairwise distance 0.61 (anthropic/claude-3.5-haiku ↔ openai/gpt-4o-mini);
+mean 0.44 across 3 models. (0 = identical, 1 = unrelated.)
+```
+
+When the max distance crosses the threshold (default **0.35**), the panel is *flagged* and the synthesizer is explicitly told to make the conflict the centre of its answer rather than paper over it. This is the same embedding-based disagreement detection → aggregator-marker pipeline as [Orchestra](https://github.com/aleksbuss/orchestra), in miniature.
+
+Scoring is **best-effort**: if there are too few answers or the embedding call fails, the panel still returns — it just omits the score. Turn it off with `SECOND_OPINION_EMBEDDINGS=off`.
+
 ## Configuration (environment)
 
 | var | required | default |
@@ -85,6 +99,9 @@ Returns the configured default panel and how to override it. No arguments.
 | `SECOND_OPINION_MAX_TOKENS` | | `1024` |
 | `SECOND_OPINION_TEMPERATURE` | | `0.7` |
 | `SECOND_OPINION_CONCURRENCY` | | `4` |
+| `SECOND_OPINION_EMBEDDINGS` | | `on` (set `off` to disable disagreement scoring) |
+| `SECOND_OPINION_EMBED_MODEL` | | `openai/text-embedding-3-small` |
+| `SECOND_OPINION_DISAGREE_THRESHOLD` | | `0.35` |
 
 Any model id on <https://openrouter.ai/models> works. Pick a cheap, fast panel — you're paying for N calls per question.
 
@@ -99,11 +116,12 @@ npm run dev         # run from source via tsx
 
 The logic is split so it's testable without a network or a key — `fetch` and `sleep` are injected:
 
-- [`src/openrouter.ts`](src/openrouter.ts) — the HTTP client: status handling, retry/backoff, HTTP-200-with-error bodies, timeouts, token usage. ([tests](src/openrouter.test.ts))
+- [`src/openrouter.ts`](src/openrouter.ts) — the HTTP client: chat + embeddings, retry/backoff, HTTP-200-with-error bodies, timeouts, token usage. ([tests](src/openrouter.test.ts))
 - [`src/panel.ts`](src/panel.ts) — fan-out with bounded concurrency, dedup, the resilience invariant, and synthesis. ([tests](src/panel.test.ts))
+- [`src/disagreement.ts`](src/disagreement.ts) — embedding-distance scoring (cosine math, pairwise aggregation), embedder injected. ([tests](src/disagreement.test.ts))
 - [`src/config.ts`](src/config.ts) — pure config parsing (models, caps, env). ([tests](src/config.test.ts))
 
-49 tests, run on Node 18, 20 & 22 in CI.
+89 tests, run on Node 18, 20 & 22 in CI. The disagreement maths is tested with a fake embedder, so CI needs no model and no key.
 
 Engineering contracts and the failures that shaped them are written down in [`CLAUDE.md`](./CLAUDE.md) and [`POST_MORTEMS.md`](./POST_MORTEMS.md) — small project, but the same habit.
 
