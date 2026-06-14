@@ -33,7 +33,9 @@ import {
 import { scoreDisagreement, DEFAULT_DISAGREE_THRESHOLD } from "./disagreement.js";
 import { makeOpenRouterEmbedder, DEFAULT_EMBED_MODEL } from "./embedder.js";
 
-const apiKey = process.env.OPENROUTER_API_KEY ?? "";
+// Trim — keys pasted/sourced from a file commonly carry a trailing newline,
+// which would otherwise corrupt the Authorization header and 401 every call.
+const apiKey = (process.env.OPENROUTER_API_KEY ?? "").trim();
 const defaultPanel = parseModels(process.env.SECOND_OPINION_MODELS);
 const synthModel = process.env.SECOND_OPINION_SYNTH?.trim() || DEFAULT_SYNTH;
 const timeoutMs = parseIntEnv(process.env.SECOND_OPINION_TIMEOUT_MS, 60_000);
@@ -47,7 +49,7 @@ const disagreeThreshold = parseThresholdEnv(
   DEFAULT_DISAGREE_THRESHOLD,
 );
 
-const server = new McpServer({ name: "mcp-second-opinion", version: "0.3.1" });
+const server = new McpServer({ name: "mcp-second-opinion", version: "0.3.2" });
 
 const keyMissing = () => ({
   isError: true,

@@ -1,6 +1,6 @@
 {
   "name": "mcp-second-opinion",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "MCP server that asks a panel of LLMs (via OpenRouter) the same question in parallel and returns every answer side by side — with optional synthesis. Get a second opinion before trusting one model.",
   "type": "module",
   "bin": {
