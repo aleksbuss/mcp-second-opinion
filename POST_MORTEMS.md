@@ -8,6 +8,28 @@ Short, honest record of what actually broke (or nearly did) while building this 
 
 ---
 
+## 6. A QA-engineer pass: an untrimmed key 401'd silently, and the tool's own glue had no test
+
+**Date:** 2026-06 · **Status:** RESOLVED (v0.3.2–0.3.3) · **Severity:** P1 (the key) + P2 (the gap)
+
+**Symptoms:** Two things a QA-lens pass surfaced that **all 91 green tests — and even live happy-path checks — had missed**:
+1. `OPENROUTER_API_KEY` was read as `process.env… ?? ""` with no trim. A key sourced from a file or pasted with a trailing newline became `Authorization: Bearer sk-…\n` — a malformed header that **401'd every single call**, with no hint why. The most common first-run setup (key in a config, copy-paste, `$(cat key)`) *was* the failure case.
+2. `index.ts`'s tool handler — the load-bearing glue (key check → resolve → fan-out → score → synthesize → compose) — was only ever verified by hand with a live key. Every *piece* had a unit test; the *wiring* had none, so a refactor could silently break the `isError` logic, the disagreement→synthesizer hand-off, or the dropped-models note and CI would stay green.
+
+**Detection:** A deliberate QA pass that (a) diffed the *mocked* response shapes against the **live** OpenRouter API — confirming chat `usage` and embeddings `index`/dim actually matched — and (b) exercised real failure modes end-to-end (wrong key, dead embed model, client disconnect → process exit) instead of trusting the mocks. The untrimmed key was caught by reasoning about how keys are actually supplied; the test gap, by asking "what here is checked *only* by hand?"
+
+**Root Cause:**
+1. Treating an environment secret as clean input. Operators don't hand-tune env files; they paste, and `$(cat key)` keeps the newline.
+2. The handler had grown real branching logic while remaining un-extracted, so it sat *below* the unit-test line and *above* the live-only line — the classic untested middle.
+
+**Fix:**
+1. `(process.env.OPENROUTER_API_KEY ?? "").trim()`. A whitespace-only key now also degrades to the clean "key not set" message instead of a 401.
+2. Lifted the flow into `handler.runSecondOpinion(args, config, deps)` with `fetch`/`sleep`/`embedder` injected, and added `handler.test.ts` (13 tests): key-missing short-circuit, partial-vs-total failure → `isError`, disagreement on/off + best-effort survival of an embedder failure, the flag→synthesizer hand-off, synthesis-failure degradation, and the cap/dropped note — all with no network. The refactor is behaviour-preserving (the prior 91 tests stayed green) and was re-checked live.
+
+**Lesson / Rule:** **A green suite of mocked unit tests says nothing about whether the mocks match reality, or whether the glue between them is wired right.** Trim env secrets; and when a handler grows logic, extract it to where it's testable with injected I/O instead of leaving it in the untested middle between unit tests and manual live checks.
+
+---
+
 ## 5. The design assumed OpenRouter had no embeddings; verifying killed a heavy dependency
 
 **Date:** 2026-06 · **Status:** RESOLVED (v0.3.0) · **Severity:** P2

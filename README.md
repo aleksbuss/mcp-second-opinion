@@ -120,8 +120,9 @@ The logic is split so it's testable without a network or a key — `fetch` and `
 - [`src/panel.ts`](src/panel.ts) — fan-out with bounded concurrency, dedup, the resilience invariant, and synthesis. ([tests](src/panel.test.ts))
 - [`src/disagreement.ts`](src/disagreement.ts) — embedding-distance scoring (cosine math, pairwise aggregation), embedder injected. ([tests](src/disagreement.test.ts))
 - [`src/config.ts`](src/config.ts) — pure config parsing (models, caps, env). ([tests](src/config.test.ts))
+- [`src/handler.ts`](src/handler.ts) — the `second_opinion` flow (key check → fan-out → disagreement → synthesis → compose), with `fetch` and the embedder injected so the glue itself is tested, not just live-checked. ([tests](src/handler.test.ts))
 
-89 tests, run on Node 18, 20 & 22 in CI. The disagreement maths is tested with a fake embedder, so CI needs no model and no key.
+104 tests, run on Node 18, 20 & 22 in CI. The disagreement maths is tested with a fake embedder, so CI needs no model and no key.
 
 Engineering contracts and the failures that shaped them are written down in [`CLAUDE.md`](./CLAUDE.md) and [`POST_MORTEMS.md`](./POST_MORTEMS.md) — small project, but the same habit.
 

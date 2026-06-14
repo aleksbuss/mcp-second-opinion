@@ -6,16 +6,17 @@ You are working on a small, production-quality **MCP server** (TypeScript, stric
 ## Stack
 TypeScript (strict, `NodeNext` ESM) · `@modelcontextprotocol/sdk` (high-level `McpServer.registerTool` + `StdioServerTransport`) · **zod pinned to v3** (the SDK is built against it — see PM #2) · Vitest · GitHub Actions CI (Node 18, 20 & 22 — the matrix matches the `engines` claim).
 
-## Architecture — three files, one job each
+## Architecture — one job per file
 ```
 src/openrouter.ts   HTTP client: chat (retries, error taxonomy, usage) + embeddings
 src/panel.ts        Fan-out (bounded concurrency + dedup) + synthesis + Markdown render
 src/disagreement.ts Embedding-distance scoring (cosine, pairwise) — embedder injected
 src/embedder.ts     Adapts openrouter.embed() to the Embedder interface
 src/config.ts       Pure config parsing: model lists, caps, env coercion
-src/index.ts        MCP server: tool registration, arg schemas, env wiring (the only impure file)
+src/handler.ts      The second_opinion flow (key check → fan-out → score → synth → compose), fetch + embedder injected so the glue is unit-tested
+src/index.ts        MCP server: tool registration, arg schemas, env → config, stdio (the only file that reads process.env / the global fetch)
 ```
-The request flow: `index.ts` (tool call) → `config` (normalise models) → `panel.askPanel` (fan out, bounded) → `openrouter.chatCompletion` (per model, retried) → `panel.formatResult` (Markdown back to the client).
+The request flow: `index.ts` (tool call, env → config) → `handler.runSecondOpinion` → `config` (normalise models) → `panel.askPanel` (fan out, bounded) → `openrouter.chatCompletion` (per model, retried) → best-effort `disagreement.scoreDisagreement` → optional `panel.synthesize` → `panel.composeResult` (Markdown + isError back to the client). The handler takes `fetch`/`sleep`/`embedder` as injected deps, so the whole flow is tested without a network in `handler.test.ts`.
 
 ## Contracts (don't break these)
 

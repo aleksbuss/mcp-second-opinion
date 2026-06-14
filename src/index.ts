@@ -19,7 +19,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { askPanel, synthesize, composeResult } from "./panel.js";
 import {
   DEFAULT_SYNTH,
   MAX_MODELS,
@@ -28,10 +27,10 @@ import {
   parseModels,
   parseTempEnv,
   parseThresholdEnv,
-  resolveModels,
 } from "./config.js";
-import { scoreDisagreement, DEFAULT_DISAGREE_THRESHOLD } from "./disagreement.js";
+import { DEFAULT_DISAGREE_THRESHOLD } from "./disagreement.js";
 import { makeOpenRouterEmbedder, DEFAULT_EMBED_MODEL } from "./embedder.js";
+import { runSecondOpinion, type SecondOpinionConfig } from "./handler.js";
 
 // Trim — keys pasted/sourced from a file commonly carry a trailing newline,
 // which would otherwise corrupt the Authorization header and 401 every call.
@@ -49,17 +48,24 @@ const disagreeThreshold = parseThresholdEnv(
   DEFAULT_DISAGREE_THRESHOLD,
 );
 
-const server = new McpServer({ name: "mcp-second-opinion", version: "0.3.2" });
+// Built once: the real embedder (called only when disagreement scoring runs) and
+// the config the handler reads. The flow itself lives in ./handler.ts so the glue
+// is unit-tested with an injected fetch + embedder.
+const embedder = makeOpenRouterEmbedder(apiKey, embedModel, timeoutMs);
+const handlerConfig: SecondOpinionConfig = {
+  apiKey,
+  defaultPanel,
+  synthModel,
+  timeoutMs,
+  defaultMaxTokens,
+  defaultTemperature,
+  concurrency,
+  embeddingsOn,
+  disagreeThreshold,
+  maxModels: MAX_MODELS,
+};
 
-const keyMissing = () => ({
-  isError: true,
-  content: [
-    {
-      type: "text" as const,
-      text: "OPENROUTER_API_KEY is not set. Add it to the server's environment (get a key at https://openrouter.ai/keys).",
-    },
-  ],
-});
+const server = new McpServer({ name: "mcp-second-opinion", version: "0.3.3" });
 
 server.registerTool(
   "second_opinion",
@@ -106,61 +112,7 @@ server.registerTool(
     },
   },
   async (args) => {
-    if (!apiKey) return keyMissing();
-
-    // resolveModels falls back to the default panel if `models` is omitted OR
-    // normalises to empty (e.g. only whitespace ids slipped past the schema).
-    const { models, dropped } = resolveModels(args.models, defaultPanel);
-
-    const answers = await askPanel({
-      apiKey,
-      prompt: args.prompt,
-      models,
-      system: args.system,
-      maxTokens: args.max_tokens ?? defaultMaxTokens,
-      temperature: args.temperature ?? defaultTemperature,
-      timeoutMs,
-      concurrency,
-    });
-
-    // Best-effort disagreement score: embed the successful answers and measure how
-    // far apart they are. Never throws (returns null on <2 answers or embed failure),
-    // so a missing score can't slow or sink the panel.
-    const okForScoring = answers
-      .filter((a) => a.ok && a.content)
-      .map((a) => ({ model: a.model, content: a.content as string }));
-    const disagreement =
-      embeddingsOn && okForScoring.length >= 2
-        ? await scoreDisagreement(
-            okForScoring,
-            makeOpenRouterEmbedder(apiKey, embedModel, timeoutMs),
-            disagreeThreshold,
-          )
-        : null;
-
-    let synthesis: string | undefined;
-    if (args.synthesize && answers.some((a) => a.ok)) {
-      try {
-        synthesis = await synthesize({
-          apiKey,
-          prompt: args.prompt,
-          answers,
-          model: synthModel,
-          // When the panel is flagged as divided, tell the synthesizer to centre the conflict.
-          emphasizeConflict: disagreement?.flagged ?? false,
-          timeoutMs,
-        });
-      } catch (err) {
-        synthesis = `_(synthesis failed: ${err instanceof Error ? err.message : String(err)})_`;
-      }
-    }
-
-    const { text, isError } = composeResult(args.prompt, answers, {
-      synthesis,
-      disagreement,
-      dropped,
-      maxModels: MAX_MODELS,
-    });
+    const { text, isError } = await runSecondOpinion(args, handlerConfig, { embedder });
     return { isError, content: [{ type: "text" as const, text }] };
   },
 );
